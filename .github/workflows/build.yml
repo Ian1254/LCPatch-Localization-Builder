@@ -1,0 +1,58 @@
+name: Build LCPatch localization
+
+on:
+  schedule:
+    - cron: '17 0,8,16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: localization-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check upstream versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/auto_build.py --check --github-output "$GITHUB_OUTPUT"
+      - name: Check for existing release
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.versions.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and verify
+        if: steps.exists.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GAME_VERSION: ${{ steps.versions.outputs.game_version }}
+          LLC_VERSION: ${{ steps.versions.outputs.llc_version }}
+        run: |
+          python3 scripts/auto_build.py \
+            --expected-game-version "$GAME_VERSION" \
+            --expected-llc-version "$LLC_VERSION"
+          python3 -m unittest discover -s tests -v
+      - name: Publish verified output
+        if: steps.exists.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.versions.outputs.tag }}
+          GAME_VERSION: ${{ steps.versions.outputs.game_version }}
+          LLC_VERSION: ${{ steps.versions.outputs.llc_version }}
+        run: |
+          printf 'Game version: `%s`\nLLC release: `%s`\n\nSource attribution and known limitations are in README.md and merge-report.json.\n' \
+            "$GAME_VERSION" "$LLC_VERSION" > release-notes.md
+          gh release create "$RELEASE_TAG" dist/*.zip dist/merge-report.json dist/checksums.sha256 \
+            --title "$RELEASE_TAG" --notes-file release-notes.md
