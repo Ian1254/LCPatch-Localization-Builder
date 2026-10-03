@@ -13,7 +13,6 @@ import urllib.request
 from pathlib import Path
 
 GH_API = "https://api.github.com/repos"
-BASE_REPO = "ghcruise/LimbusCompany-IOS-Localization"
 TEXT_REPO = "LocalizeLimbusCompany/LocalizeLimbusCompany"
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,22 +57,16 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--check", action="store_true", help="resolve versions without downloading assets")
     p.add_argument("--github-output", type=Path)
-    p.add_argument("--expected-game-version")
     p.add_argument("--expected-llc-version")
     p.add_argument("--dist", type=Path, default=ROOT / "dist")
     args = p.parse_args()
-    base, text = release(BASE_REPO), release(TEXT_REPO)
-    base_tag, text_tag = base["tag_name"], text["tag_name"]
-    match = re.fullmatch(r"v(\d+\.\d+\.\d+)", base_tag)
-    if not match or not re.fullmatch(r"\d{10}", text_tag):
-        raise ValueError(f"Unexpected release versions: {base_tag}, {text_tag}")
-    game_version = match.group(1)
-    if args.expected_game_version and args.expected_game_version != game_version:
-        raise ValueError("Game version changed between check and build")
+    text = release(TEXT_REPO)
+    text_tag = text["tag_name"]
+    if not re.fullmatch(r"\d{10}", text_tag):
+        raise ValueError(f"Unexpected translation version: {text_tag}")
     if args.expected_llc_version and args.expected_llc_version != text_tag:
         raise ValueError("Translation version changed between check and build")
-    versions = {"game_version": game_version, "llc_version": text_tag,
-                "tag": f"v{game_version}-{text_tag}"}
+    versions = {"llc_version": text_tag, "tag": f"LLC-{text_tag}"}
     if args.github_output:
         with args.github_output.open("a") as output:
             for key, value in versions.items():
@@ -83,19 +76,16 @@ def main():
         return
     args.dist.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
-        base_path = Path(directory) / "localize_jp.zip"
         text_path = Path(directory) / "LimbusLocalize.zip"
-        download(asset(base, "localize_jp.zip"), base_path)
         download(asset(text, f"LimbusLocalize_{text_tag}.zip"), text_path)
-        output_path = args.dist / f"LCPatch_{game_version}_LLC_{text_tag}.zip"
+        output_path = args.dist / f"LCPatch_LLC_{text_tag}.zip"
         report_path = args.dist / "merge-report.json"
         subprocess.run([sys.executable, str(ROOT / "build.py"),
-                        "--base", str(base_path), "--llc", str(text_path),
+                        "--llc", str(text_path),
                         "--output", str(output_path), "--report", str(report_path),
-                        "--game-version", game_version, "--llc-version", text_tag], check=True)
+                        "--llc-version", text_tag], check=True)
         report = json.loads(report_path.read_text())
-        report["sources"] = {"baseline_release": base["html_url"],
-                             "translation_release": text["html_url"]}
+        report["sources"] = {"translation_release": text["html_url"]}
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         (args.dist / "checksums.sha256").write_text(
             f"{hashlib.sha256(output_path.read_bytes()).hexdigest()}  {output_path.name}\n"
